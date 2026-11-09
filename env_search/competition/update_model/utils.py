@@ -23,7 +23,7 @@ class Map:
                 f.readline()
                 self.height = int(f.readline().split()[-1])
                 self.width = int(f.readline().split()[-1])
-                self.graph = np.zeros((self.height, self.width), dtype=np.int)
+                self.graph = np.zeros((self.height, self.width), dtype=int)
                 # skip the map line
                 f.readline()
                 for row in range(self.height):
@@ -38,7 +38,7 @@ class Map:
                 map_json = json.load(f)
                 self.height = map_json["n_row"]
                 self.width = map_json["n_col"]
-                self.graph = np.zeros((self.height, self.width), dtype=np.int)
+                self.graph = np.zeros((self.height, self.width), dtype=int)
                 for row in range(self.height):
                     line = map_json["layout"][row]
                     assert len(line) == self.width

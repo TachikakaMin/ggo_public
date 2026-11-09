@@ -4,6 +4,7 @@ import fire
 import json
 
 import multiprocessing
+import time
 
 import numpy as np
 
@@ -36,6 +37,8 @@ def gen_highway_single(
 ):
     """Generate highway (edge weights and wait costs) given an update model.
     """
+    started = time.monotonic()
+    print(f"Generating agents={num_agents} pid={os.getpid()}", flush=True)
     n_valid_edges = get_n_valid_edges(base_map_np, bi_directed, domain)
     n_valid_vertices = get_n_valid_vertices(base_map_np, domain)
 
@@ -62,8 +65,9 @@ def gen_highway_single(
     # Write result
     map_name = f"n_agents={num_agents}.json"
     opt_highway_path = logdir.file(os.path.join("maps", map_name))
+    temporary_path = f"{opt_highway_path}.tmp.{os.getpid()}"
     write_map_str_to_json(
-        opt_highway_path,
+        temporary_path,
         base_map_str,
         map_name,
         domain,
@@ -72,6 +76,8 @@ def gen_highway_single(
         optimize_wait=True,
         piu_n_agent=int(num_agents),
     )
+    os.replace(temporary_path, opt_highway_path)
+    print(f"Generated agents={num_agents} elapsed_seconds={time.monotonic()-started:.3f} pid={os.getpid()}", flush=True)
 
 
 def gen_highway(
@@ -119,7 +125,8 @@ def gen_highway(
             num_agents = np.arange(n_agent_start, n_agent_end, n_agent_step)
             n_tasks = len(num_agents)
 
-    pool = multiprocessing.Pool(n_workers)
+    # Native simulator allocations must not accumulate across maps.
+    pool = multiprocessing.Pool(n_workers, maxtasksperchild=1)
     results_and_weights = pool.starmap(
         gen_highway_single,
         zip(
@@ -133,7 +140,10 @@ def gen_highway(
             repeat(domain, n_tasks),
             repeat(map_filepath, n_tasks),
         ),
+        chunksize=1,
     )
+    pool.close()
+    pool.join()
 
 
 if __name__ == "__main__":

@@ -6,9 +6,6 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import seaborn as sns
 import glob
-import cv2
-import imageio
-import moviepy.editor as mp
 
 from PIL import Image
 from scipy.sparse import csgraph
@@ -35,6 +32,9 @@ def convert_avi_to_gif(
         output_path,
         output_resolution=(640, 640),
 ):
+    import imageio
+    import moviepy.editor as mp
+
     # Load the input video file
     clip = mp.VideoFileClip(input_path)
 
@@ -57,6 +57,8 @@ def convert_avi_to_gif(
 
 
 def create_movie(folder_path, filename):
+    import cv2
+
     glob_str = os.path.join(folder_path, '*.png')
     image_files = sorted(glob.glob(glob_str))
 
@@ -116,7 +118,6 @@ def visualize_env(env_np, cmap, norm, ax, fig, save, filenames, store_dir,
                 dpi=dpi,
                 bbox_inches='tight',
                 # pad_inches=0,
-                rasterized=True,
             )
         plt.close('all')
 

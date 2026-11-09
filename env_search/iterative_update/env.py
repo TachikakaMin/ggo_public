@@ -30,6 +30,31 @@ from env_search.utils.logging import get_current_time_str
 import hashlib
 import time
 import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
+
+
+def isolated_lacam_batch(kwargs, seeds, workers):
+    """Run independent seeds in disposable processes, retaining input order."""
+    assert json.loads(kwargs["config"])["lifelong_solver_name"] == "LaCAM2"
+    program = """
+import json, sys
+import py_driver
+kwargs = json.load(sys.stdin)
+result = py_driver.run(**kwargs)
+print("----LACAM_SEED_JSON----")
+print(result)
+print("----LACAM_SEED_JSON----")
+"""
+    def run(seed):
+        payload = dict(kwargs, seed=seed)
+        child = subprocess.run(
+            [sys.executable, "-c", program], input=json.dumps(payload),
+            stdout=subprocess.PIPE, text=True, check=True,
+        )
+        return json.loads(child.stdout.split("----LACAM_SEED_JSON----")[1])
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(run, seeds))
 
 
 class IterUpdateEnvBase(gym.Env):
@@ -213,114 +238,22 @@ class CompetitionIterUpdateEnv(IterUpdateEnvBase):
             "config": load_pibt_default_config(),  # Use PIBT default config
         }
 
+        sim_workers = int(os.environ.get("PIU_SIM_WORKERS", "1"))
+        if sim_workers < 1:
+            raise ValueError("PIU_SIM_WORKERS must be positive")
         if not manually_clean_memory:
-            results = []  # List[json]
             for _ in range(self.config.iter_update_n_sim):
                 kwargs["seed"] = int(self.rng.integers(100000))
-                result_jsonstr = py_driver.run(**kwargs)
-                result = json.loads(result_jsonstr)
-                results.append(result)
+                results.append(json.loads(py_driver.run(**kwargs)))
         else:
             if save_in_disk:
-                file_dir = os.path.join(get_project_dir(), 'run_files')
-                os.makedirs(file_dir, exist_ok=True)
-                hash_obj = hashlib.sha256()
-                raw_name = get_current_time_str().encode() + os.urandom(16)
-                hash_obj.update(raw_name)
-                file_name = hash_obj.hexdigest()
-                file_path = os.path.join(file_dir, file_name)
-                with open(file_path, 'w') as f:
-                    json.dump(kwargs, f)
-                t1 = time.time()
-                delimiter1 = "----DELIMITER1----DELIMITER1----"
-                delimiter2 = "----DELIMITER2----DELIMITER2----"
-                output = subprocess.run(
-                    [
-                        'python', '-c', f"""\
-import numpy as np
-import py_driver
-import json
-import time
-
-file_path='{file_path}'
-with open(file_path, 'r') as f:
-    kwargs_ = json.load(f)
-
-results = []
-
-t0 = time.time()
-rng = np.random.default_rng(seed={self.seed})
-for _ in range({self.config.iter_update_n_sim}):
-    kwargs_["seed"] = int(rng.integers(100000))
-    t0 = time.time()
-    result_jsonstr = py_driver.run(**kwargs_)
-    t1 = time.time()
-    print("{delimiter2}")
-    print(t1-t0)
-    print("{delimiter2}")
-    result = json.loads(result_jsonstr)
-    results.append(result)
-np.set_printoptions(threshold=np.inf)
-
-print("{delimiter1}")
-print(results)
-print("{delimiter1}")
-
-                """
-                    ],
-                    stdout=subprocess.PIPE).stdout.decode('utf-8')
-                t2 = time.time()
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                else:
-                    raise NotImplementedError
-
+                batch_rng = np.random.default_rng(seed=self.seed)
+                first_seeds = [int(batch_rng.integers(100000))
+                               for _ in range(self.config.iter_update_n_sim)]
             else:
-                t1 = time.time()
-                delimiter1 = "----DELIMITER1----DELIMITER1----"
-                output = subprocess.run(
-                    [
-                        'python', '-c', f"""\
-import numpy as np
-import py_driver
-import json
+                first_seeds = [int(self.rng.integers(100000))] * self.config.iter_update_n_sim
+            results = isolated_lacam_batch(kwargs, first_seeds, sim_workers)
 
-kwargs_ = {kwargs}
-results = []
-for _ in range({self.config.iter_update_n_sim}):
-    kwargs_["seed"] = int({self.rng.integers(100000)})
-    result_jsonstr = py_driver.run(**kwargs_)
-    result = json.loads(result_jsonstr)
-    results.append(result)
-np.set_printoptions(threshold=np.inf)
-print("{delimiter1}")
-print(results)
-print("{delimiter1}")
-                    """
-                    ],
-                    stdout=subprocess.PIPE).stdout.decode('utf-8')
-                t2 = time.time()
-            # print("================")
-            # if self.verbose >= 2:
-            #     print("run_sim time = ", t2-t1)
-
-            # if self.verbose >= 4:
-            #     o = output.split(delimiter2)
-            #     for t in o[1:-1:2]:
-            #         time_s = t.replace('\n', '')
-            #         print("inner sim time =", time_s)
-            #     print(self.config.iter_update_n_sim)
-            outputs = output.split(delimiter1)
-            if len(outputs) <= 2:
-                print(output)
-                raise NotImplementedError
-            else:
-                results_str = outputs[1].replace('\n', '').replace(
-                    'array', 'np.array')
-                # print(collected_results_str)
-                results = eval(results_str)
-
-            gc.collect()
         # aggregate results
         keys = results[0].keys()
         collected_results = {key: [] for key in keys}
@@ -329,11 +262,10 @@ print("{delimiter1}")
             for key in keys:
                 collected_results[key].append(result_json[key])
 
-        for _ in range(self.config.iter_update_n_sim):
-            kwargs["seed"] = int(self.rng.integers(100000))
-            result_jsonstr = py_driver.run(**kwargs)
-            result = json.loads(result_jsonstr)
-            results.append(result)
+        # Preserve the public implementation's second batch and RNG sequence.
+        seeds = [int(self.rng.integers(100000))
+                 for _ in range(self.config.iter_update_n_sim)]
+        results.extend(isolated_lacam_batch(kwargs, seeds, sim_workers))
 
         # aggregate results
         keys = results[0].keys()

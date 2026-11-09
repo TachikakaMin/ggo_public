@@ -21,6 +21,7 @@ import shutil
 import multiprocessing
 import hashlib
 import subprocess
+import sys
 
 from scipy.stats import entropy
 from pprint import pprint
@@ -78,7 +79,7 @@ class CompetitionModule:
                 # delimiter2 = "----DELIMITER2----DELIMITER2----"
                 output = subprocess.run(
                     [
-                        'python', '-c', f"""\
+                        sys.executable, '-c', f"""\
 import numpy as np
 import py_driver
 import json
@@ -109,7 +110,7 @@ print("{delimiter1}")
                 delimiter1 = "----DELIMITER1----DELIMITER1----"
                 output = subprocess.run(
                     [
-                        'python', '-c', f"""\
+                        sys.executable, '-c', f"""\
 import numpy as np
 import py_driver
 import json
